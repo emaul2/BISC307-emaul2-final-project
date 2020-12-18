@@ -1,0 +1,138 @@
+---
+title: 'BISC 307, Lab 2: NEON Megapit Soil Profiles'
+author: "Prof. Jackie Hatala Matthes, FA 2020"
+date: 'Lab: 5-6 November 2020'
+output:
+  html_document: default
+  pdf_document: default
+---
+[NEON Megapit sampling design](https://data.neonscience.org/data-products/DP1.00096.001)
+
+```{r, results='hide', message=FALSE, warning=FALSE}
+#install.packages("neonUtilities")
+
+# Set global option to NOT convert all character variables to factors, which helps to make the NEON functions to work best
+options(stringsAsFactors=F)
+
+# Load required packages
+library(neonUtilities)
+library(tidyverse)
+
+#Read in all available Megapit data
+Megapit_data <- loadByProduct(dpID = "DP1.00096.001", check.size = F)
+
+# Unlist Megapit_data to Rstudio environment 
+list2env(Megapit_data, .GlobalEnv)
+```
+
+* the horizon name and depth data in`mgp_perhorizon`
+* biogeochemistry data in `mpg_biogeosample`
+* bulk density data in `mgp_perbulksample`
+
+```{r}
+# Depths of horizon layers and horizon IDs per site
+# Use mutate to create a horizon name that is just the first letter
+soil_horizons <- mgp_perhorizon %>%
+  select(-uid, -remarks, -publicationDate) %>% # minus sign "unselects"
+  mutate(horizonNameSimple = str_extract(horizonName, "[A-Z]{1}"))
+
+soil_horizons = subset(soil_horizons, select = c(horizonID, siteID, pitID, setDate, collectDate, domainID, horizonName, horizonTopDepth, horizonBottomDepth))
+
+# Soil texture, elemental, and nutrient data per horizon
+soil_biogeochem <- mgp_perbiogeosample %>%
+  select(-uid, -remarks) %>%
+  filter(biogeoSampleType=="Regular")
+
+soil_biogeochem = subset(soil_biogeochem, select = c(siteID, horizonID, pitID, horizonName, setDate, collectDate, domainID, carbonTot))
+```
+
+```{r}
+# Join biogeochemical and physical data 
+# function structure: left_join(df_left, df_right, by = c(set of columns in common) - i.e., the key)
+soils <- left_join(soil_horizons, soil_biogeochem, 
+               by=c('horizonID', 'siteID', 'pitID','setDate',
+                    'collectDate', 'domainID', 'horizonName')) %>%
+  arrange(siteID, horizonBottomDepth) # Sort by siteID then horizon depth
+```
+
+
+```{r}
+# Load csv file with NEON site data
+neon_sites <- read_csv("NEON-field-sites.csv")
+
+# Attach NEON site data to soil profiles
+soils_sites <- soils %>%
+  left_join(neon_sites, by = c("domainID","siteID"))
+```
+
+
+This could be modified to only show what I need for the final project
+```{r}
+rootsites<-filter(soils_sites, 
+siteID =="HARV" | siteID == "UNDE" | siteID == "YELL")
+
+```
+***
+
+This code framework may come in handy
+```{r}
+# Data processing steps:  
+# 1. Filter to just the O-horizon data
+# 2. Use mutate to calculate O-horizon depth from top/bottom difference
+# 3. Plot O-horizon depth vs mean annual precipitation
+# 4. Linear regression: O-depth ~ precipitation (y ~ x)
+
+# Steps 1 & 2: Data Wrangling
+Ohorizon_precip <- soils_sites %>%
+  filter(horizonNameSimple == "O") %>%
+  mutate(horizonDepth = horizonBottomDepth - horizonTopDepth)
+  
+# Step 3: Plot
+ggplot(Ohorizon_precip, aes(x = meanAnnualPrecip_mm, y = horizonDepth)) +
+  geom_point() +
+  labs(x = "Mean Annual Precipitation (mm)", y = "O-horizon depth (cm)") +
+  theme_bw()
+```
+Framework for log plotting below
+```{r}
+# Step 3: Plot with log(horizonDepth)
+ggplot(Ohorizon_precip, aes(x = meanAnnualPrecip_mm, y = log(horizonDepth))) +
+  geom_point()+
+  labs(x = "Mean Annual Precipitation (mm)", y = "ln O-horizon depth (cm)") +
+  theme_bw()
+
+```
+
+double-log plot below:
+```{r}
+# Step 3: Plot with log(horizonDepth) ~ log(precip)
+ggplot(Ohorizon_precip, aes(x = log(meanAnnualPrecip_mm), y = log(horizonDepth))) +
+  geom_point()+
+  geom_smooth(method = "lm") +
+  labs(x = "ln Mean Annual Precipitation (mm)", y = "ln O-horizon depth (cm)") +
+  theme_bw()
+
+```
+
+
+```{r}
+# 4a. Calculate correlation between log(horizonDepth) & log(meanAnnualPrecip_mm)
+cor.test(log(Ohorizon_precip$horizonDepth), 
+         log(Ohorizon_precip$meanAnnualPrecip_mm))
+
+```
+From this output, we can see that the correlation coefficient (called `r` when you're writing it in a paper) is equal to -0.75, indicating a strong negative correlation between these two variables. Closer to the top of the output we also see that the p-value < 0.01, which indicates this correlation is signfiicant at the alpha = 0.01 value.
+
+Assessing whether the slope of a linear regression model is different from zero is a stronger test of statistical inference. This test assumes that the x-axis is a predictor variable (indpendent variable) for the data on the y-axis (dependent variable). We can estimate a linear regression model for data in R using the `lm()` function from base R:
+
+```{r}
+# 4b. Create linear regression model for log(O-depth) ~ log(Precip)  
+# *** The format for the lm() function is y-variable ~ x-variable
+reg_OdepthMAP <- lm(log(horizonDepth) ~ log(meanAnnualPrecip_mm), 
+                    data = Ohorizon_precip)
+
+# Look at linear regression summary
+summary(reg_OdepthMAP)
+     ```
+
+
